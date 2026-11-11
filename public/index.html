@@ -8,96 +8,93 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <h1>Micromouse Slalom Simulator</h1>
-      <p>motion_speed_profiles + turn_sim_pygame ロジック統合版</p>
-    </div>
-    <button id="resetBtn">初期値に戻す</button>
-  </header>
+<header class="topbar">
+  <div><h1>Micromouse Slalom Simulator</h1><p>迷路座標 + turn_sim_pygame + motion_speed_profiles</p></div>
+  <button id="resetBtn">初期値に戻す</button>
+</header>
 
-  <main class="layout">
-    <section class="card sim-card">
-      <div class="toolbar">
-        <div class="field">
-          <label for="profile">速度プロファイル</label>
-          <select id="profile">
-            <option value="0">0 : 200 mm/s</option>
-            <option value="1">1 : 300 mm/s</option>
-            <option value="2">2 : 400 mm/s</option>
-            <option value="3">3 : 500 mm/s</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="pattern">走行パターン</label>
-          <select id="pattern">
-            <option value="right">右スラローム</option>
-            <option value="left">左スラローム</option>
-            <option value="left_right">左 → 右 連続</option>
-            <option value="right_left">右 → 左 連続</option>
-          </select>
-        </div>
-        <button id="playBtn">▶ 再生</button>
+<main class="layout">
+  <section class="card sim-card">
+    <div class="toolbar">
+      <div class="field">
+        <label for="profile">速度プロファイル</label>
+        <select id="profile">
+          <option value="0">0 : 200 mm/s</option>
+          <option value="1">1 : 300 mm/s</option>
+          <option value="2">2 : 400 mm/s</option>
+          <option value="3">3 : 500 mm/s</option>
+        </select>
       </div>
+      <div class="field">
+        <label for="pattern">走行パターン</label>
+        <select id="pattern">
+          <option value="left_right">左 → 右 連続</option>
+          <option value="right_left">右 → 左 連続</option>
+          <option value="left">左スラローム</option>
+          <option value="right">右スラローム</option>
+        </select>
+      </div>
+      <button id="playBtn">▶ 再生</button>
+    </div>
 
-      <canvas id="simCanvas" width="760" height="760"></canvas>
+    <canvas id="simCanvas" width="760" height="760"></canvas>
 
-      <div class="legend">
-        <span><i class="dot pre"></i>入口/出口</span>
-        <span><i class="dot acc"></i>角加速/減速</span>
-        <span><i class="dot constant"></i>等角速度</span>
-        <span><i class="dot center"></i>マス中心線</span>
+    <div class="legend">
+      <span><i class="dot center"></i>目標中心線</span>
+      <span><i class="dot pre"></i>直進</span>
+      <span><i class="dot acc"></i>角加速/減速</span>
+      <span><i class="dot constant"></i>等角速度</span>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="card">
+      <h2>Pygameターン値</h2>
+      <div class="grid2">
+        <label>最大角速度 °/s<input id="wmax" type="number" value="200" step="10"></label>
+        <label>角加速度 °/s²<input id="alpha" type="number" value="1000" step="100"></label>
+        <label>基準入口距離 mm<input id="basePre" type="number" value="90" step="1"></label>
+        <label>基準出口距離 mm<input id="basePost" type="number" value="55" step="1"></label>
+        <label>スリップ角係数<input id="slipK" type="number" value="0.002" step="0.0001"></label>
+        <label>摩擦係数 μ<input id="mu" type="number" value="1.0" step="0.05"></label>
       </div>
     </section>
 
-    <aside class="side">
-      <section class="card">
-        <h2>ターンパラメータ</h2>
-        <div class="grid2">
-          <label>最大角速度 °/s<input id="wmax" type="number" value="200" step="10"></label>
-          <label>角加速度 °/s²<input id="alpha" type="number" value="1000" step="100"></label>
-          <label>スリップ角係数<input id="slipK" type="number" value="0.002" step="0.0001"></label>
-          <label>摩擦係数 μ<input id="mu" type="number" value="1.0" step="0.05"></label>
-        </div>
-        <p class="hint">速度と入口/出口補正は motion_speed_profiles から自動読込。</p>
-      </section>
+    <section class="card">
+      <h2>motion_speed_profiles（編集可）</h2>
+      <div id="codeParams" class="grid2"></div>
+      <div class="actions"><button id="applyCodeBtn">コード値を反映</button></div>
+    </section>
 
-      <section class="card">
-        <h2>現在のコード値</h2>
-        <dl id="profileValues" class="kv"></dl>
-      </section>
+    <section class="card">
+      <h2>走行結果</h2>
+      <dl id="resultValues" class="kv"></dl>
+    </section>
 
-      <section class="card">
-        <h2>物理診断</h2>
-        <dl id="physicsValues" class="kv"></dl>
-        <div id="gripStatus" class="status"></div>
-      </section>
+    <section class="card">
+      <h2>物理診断</h2>
+      <dl id="physicsValues" class="kv"></dl>
+      <div id="gripStatus" class="status"></div>
+    </section>
 
-      <section class="card">
-        <h2>車体</h2>
-        <dl class="kv">
-          <dt>質量</dt><dd>682 g</dd>
-          <dt>タイヤ幅</dt><dd>6 mm</dd>
-          <dt>タイヤ外端間</dt><dd>87 mm</dd>
-          <dt>トレッド</dt><dd>81 mm</dd>
-        </dl>
-      </section>
-    </aside>
-  </main>
+    <section class="card">
+      <h2>車体</h2>
+      <dl class="kv">
+        <dt>質量</dt><dd>682 g</dd>
+        <dt>タイヤ幅</dt><dd>6 mm</dd>
+        <dt>タイヤ外端間</dt><dd>87 mm</dd>
+        <dt>トレッド</dt><dd>81 mm</dd>
+        <dt>迷路1マス</dt><dd>180 mm</dd>
+      </dl>
+    </section>
+  </aside>
+</main>
 
-  <section class="card notes">
-    <h2>現在のモデル</h2>
-    <p>
-      Pygame版と同じく 1 ms 刻みで「角加速 → 等角速度 → 角減速」を計算し、
-      進行方向にはスリップ角補正を加えます。連続走行では
-      <code>left_right_entry_extra_mm</code> / <code>right_left_entry_extra_mm</code>
-      を2個目のターン入口に加算します。
-    </p>
-    <p>
-      摩擦係数は現在「滑る可能性の診断」に使用し、軌跡そのものを摩擦限界で変形させる処理は未実装です。
-    </p>
-  </section>
+<section class="card notes">
+  <h2>連続スラロームの座標</h2>
+  <p>左→右は <code>(1,0) → (1,1) → (0,1) → (0,2)</code>。ターン直前・直後の直進も描画し、各曲がり角の手前からターンを開始します。実軌跡が中心線からずれた場合は、そのズレもそのまま表示します。</p>
+</section>
 
-  <script src="./app.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
