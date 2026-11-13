@@ -9,8 +9,11 @@
 </head>
 <body>
 <header class="topbar">
-  <div><h1>Micromouse Slalom Simulator</h1><p>迷路座標 + turn_sim_pygame + motion_speed_profiles</p></div>
-  <button id="resetBtn">初期値に戻す</button>
+  <div>
+    <h1>Micromouse Slalom Simulator</h1>
+    <p>東北大会版 slalom.c / slalom_profiles.h / params.h / search_slalom.c 準拠</p>
+  </div>
+  <button id="resetBtn">実機コード初期値に戻す</button>
 </header>
 
 <main class="layout">
@@ -40,30 +43,23 @@
     <canvas id="simCanvas" width="760" height="760"></canvas>
 
     <div class="legend">
-      <span><i class="dot center"></i>目標中心線</span>
-      <span><i class="dot pre"></i>直進</span>
-      <span><i class="dot acc"></i>角加速/減速</span>
-      <span><i class="dot constant"></i>等角速度</span>
+      <span><i class="dot center"></i>マス中心の理想経路</span>
+      <span><i class="dot startstop"></i>半区画の発進/停止</span>
+      <span><i class="dot wallread"></i>壁読み取り</span>
+      <span><i class="dot entryexit"></i>入口/出口直進</span>
+      <span><i class="dot curve"></i>スラローム曲線</span>
     </div>
   </section>
 
   <aside class="side">
     <section class="card">
-      <h2>Pygameターン値</h2>
-      <div class="grid2">
-        <label>最大角速度 °/s<input id="wmax" type="number" value="200" step="10"></label>
-        <label>角加速度 °/s²<input id="alpha" type="number" value="1000" step="100"></label>
-        <label>基準入口距離 mm<input id="basePre" type="number" value="90" step="1"></label>
-        <label>基準出口距離 mm<input id="basePost" type="number" value="55" step="1"></label>
-        <label>スリップ角係数<input id="slipK" type="number" value="0.002" step="0.0001"></label>
-        <label>摩擦係数 μ<input id="mu" type="number" value="1.0" step="0.05"></label>
+      <div class="section-head">
+        <h2>速度別 SlalomProfile</h2>
+        <span class="badge">編集可</span>
       </div>
-    </section>
-
-    <section class="card">
-      <h2>motion_speed_profiles（編集可）</h2>
       <div id="codeParams" class="grid2"></div>
-      <div class="actions"><button id="applyCodeBtn">コード値を反映</button></div>
+      <div class="actions"><button id="applyCodeBtn">この値で再計算</button></div>
+      <p class="hint">軌道に直接効くのは入口/出口補正、連続入口補正、左→右 lateral、sense_advance などです。heading/wall系は実機コード値として表示しますが、この公称軌道では誤差0として扱います。</p>
     </section>
 
     <section class="card">
@@ -72,27 +68,36 @@
     </section>
 
     <section class="card">
+      <h2>各ターン</h2>
+      <dl id="turnValues" class="kv"></dl>
+    </section>
+
+    <section class="card">
       <h2>物理診断</h2>
-      <dl id="physicsValues" class="kv"></dl>
+      <label class="single-field">仮定する摩擦係数 μ<input id="mu" type="number" value="1.00" step="0.05" min="0.05" max="5"></label>
+      <dl id="physicsValues" class="kv spaced"></dl>
       <div id="gripStatus" class="status"></div>
     </section>
 
     <section class="card">
-      <h2>車体</h2>
+      <h2>実機定数</h2>
       <dl class="kv">
         <dt>質量</dt><dd>682 g</dd>
+        <dt>ホイール直径</dt><dd>52.8 mm</dd>
+        <dt>1回転パルス</dt><dd>400</dd>
+        <dt>トレッド</dt><dd>81.9 mm</dd>
         <dt>タイヤ幅</dt><dd>6 mm</dd>
-        <dt>タイヤ外端間</dt><dd>87 mm</dd>
-        <dt>トレッド</dt><dd>81 mm</dd>
-        <dt>迷路1マス</dt><dd>180 mm</dd>
+        <dt>半区画 / 1区画</dt><dd>90 / 180 mm</dd>
       </dl>
     </section>
   </aside>
 </main>
 
 <section class="card notes">
-  <h2>連続スラロームの座標</h2>
-  <p>左→右は <code>(1,0) → (1,1) → (0,1) → (0,2)</code>。ターン直前・直後の直進も描画し、各曲がり角の手前からターンを開始します。実軌跡が中心線からずれた場合は、そのズレもそのまま表示します。</p>
+  <h2>実コードとの対応</h2>
+  <p>連続走行は、半区画発進 → 壁読み取り → 1個目の90°スラローム → 壁読み取り → 2個目の90°スラローム → 半区画減速停止、の順で計算します。壁読み取りで進んだ距離は次の入口距離へ加算せず、入口目標距離の中に含めます。</p>
+  <p>通常曲線は <code>θ(u)=π/4(1−cos(πu))</code>。500 mm/sの左→右で <code>left_right_lateral_mm</code> が有効な場合だけ、実コードと同じ bias 付き曲線を計算します。壁AD値・パルス誤差が与えられていないため、WallCorrection / HeadingCorrection は0の公称軌道です。</p>
+  <div id="configWarning" class="status warning hidden"></div>
 </section>
 
 <script src="./app.js"></script>
