@@ -49,8 +49,10 @@
       <span><i class="dot entryexit"></i>指令・入口/出口直進</span>
       <span><i class="dot curve"></i>指令・スラローム曲線</span>
       <span><i class="trace actual"></i>推定実軌道</span>
-      <span><i class="trace sliding"></i>滑走区間</span>
+      <span><i class="trace sliding"></i>滑走区間・速度方向</span>
+      <span><i class="dot slip-start"></i>最初の滑り開始</span>
     </div>
+    <p id="wheelValues" class="hint"></p>
   </section>
 
   <aside class="side">
@@ -77,18 +79,15 @@
     <section class="card">
       <h2>物理診断</h2>
       <div class="field">
-        <label for="muPreset">黒つや消し塗装木床の摩擦係数 μ</label>
+        <label for="muPreset">黒つや消し塗装木床の横摩擦</label>
         <select id="muPreset">
-          <option value="0.70">基準（乾燥） μ = 0.70</option>
-          <option value="0.55">低グリップ μ = 0.55</option>
-          <option value="0.50">低グリップ μ = 0.50</option>
-          <option value="0.45">低グリップ μ = 0.45</option>
-          <option value="0.40">低グリップ μ = 0.40</option>
+          <option value="measured">実測 μs = 0.235 / μk = 0.205</option>
           <option value="custom">カスタム</option>
         </select>
       </div>
-      <label class="single-field" hidden>カスタム μ（0～5）<input id="mu" type="number" value="0.70" step="any" min="0" max="5" disabled></label>
-      <p class="hint">プリセットは比較用の仮定値です。指令速度で走ると仮定し、横加速度を μg で制限します。姿勢ずれは右回りを正とします。</p>
+      <label class="single-field" hidden>静止横摩擦 μs（0～5）<input id="muStatic" type="number" value="0.235" step="any" min="0" max="5" disabled></label>
+      <label class="single-field" hidden>動横摩擦 μk（0～μs）<input id="muKinetic" type="number" value="0.205" step="any" min="0" max="5" disabled></label>
+      <p class="hint">実機を真横に押したときの値です。前進速度と車体の旋回は左右輪の指令に従うと仮定します。このため姿勢誤差は0°で、滑ると車体の向きと進行方向がずれます。</p>
       <dl id="physicsValues" class="kv spaced"></dl>
       <div id="gripStatus" class="status"></div>
     </section>
