@@ -5,7 +5,7 @@ const CELL = 180;
 const HALF_CELL = 90;
 const DT = 0.001;
 const G = 9.80665;
-const DEFAULT_MU = 0.70;
+const MEASURED_GRIP = {muStatic:0.235, muKinetic:0.205};
 
 const MACHINE = {
   massKg: 0.682,
@@ -73,7 +73,9 @@ const els = {
   playBtn: document.querySelector("#playBtn"),
   resetBtn: document.querySelector("#resetBtn"),
   muPreset: document.querySelector("#muPreset"),
-  mu: document.querySelector("#mu"),
+  muStatic: document.querySelector("#muStatic"),
+  muKinetic: document.querySelector("#muKinetic"),
+  wheelValues: document.querySelector("#wheelValues"),
   codeParams: document.querySelector("#codeParams"),
   applyCodeBtn: document.querySelector("#applyCodeBtn"),
   resultValues: document.querySelector("#resultValues"),
@@ -421,51 +423,68 @@ function simulateRoute(){
   };
 }
 
-function simulateFriction(commanded, mu){
-  let actual = {...commanded[0], sliding:false};
+function simulateFriction(commanded, {muStatic, muKinetic}){
+  const staticLimit = muStatic * G;
+  const kineticLimit = muKinetic * G;
+  let actual = {...commanded[0], vx:0, vy:commanded[0].speedMmS / 1000, sliding:false};
   const samples = [actual];
+  let lateralSpeed = 0;
+  let firstSlide = null;
   let slideMm = 0;
   let slideTime = 0;
+  let maxSlipAngleDeg = 0;
+  let maxLateralErrorMm = 0;
   let maxErrorMm = 0;
 
   for(let i=1;i<commanded.length;i++){
     const prev = commanded[i - 1], next = commanded[i];
     const dt = next.t - prev.t;
-    const speedMS = next.speedMmS / 1000;
-    const omega = next.omegaRadS;
-    const limit = mu * G / speedMS;
-    const sliding = Math.abs(omega) > limit;
-    const dx = next.x - prev.x, dy = next.y - prev.y;
-    const headingOffset = actual.headingDeg - prev.headingDeg;
+    const forwardSpeed = next.speedMmS / 1000;
+    const halfTurn = (next.headingDeg - prev.headingDeg) / 2;
+    const headingMid = prev.headingDeg + halfTurn;
+    const requiredAy = forwardSpeed * Math.abs(next.omegaRadS);
 
-    if(sliding){
-      const headingChange = rad2deg(Math.sign(omega) * limit * dt);
-      const headingMid = actual.headingDeg + headingChange / 2;
-      const distanceMm = next.speedMmS * dt;
-      actual = {
-        x:actual.x + distanceMm * sinD(headingMid),
-        y:actual.y + distanceMm * cosD(headingMid),
-        headingDeg:actual.headingDeg + headingChange,
-        sliding:true
-      };
-      slideMm += distanceMm;
-      slideTime += dt;
+    // Wheel commands prescribe forward speed and yaw. Rotating the body axes
+    // produces lateral velocity; floor friction acts against that velocity.
+    const freeLateral = lateralSpeed * cosD(2 * halfTurn) - forwardSpeed * sinD(2 * halfTurn);
+    const previousLateral = lateralSpeed;
+    const slideStep = requiredAy > staticLimit || previousLateral !== 0;
+    if(slideStep){
+      const correction = Math.min(Math.abs(freeLateral), kineticLimit * dt);
+      lateralSpeed = freeLateral - Math.sign(freeLateral) * correction;
     }else{
-      // Reuse the exact commanded step in the actual frame to avoid integration drift at full grip.
-      actual = {
-        x:next.x + (actual.x - prev.x) + dx * (cosD(headingOffset) - 1) + dy * sinD(headingOffset),
-        y:next.y + (actual.y - prev.y) + dy * (cosD(headingOffset) - 1) - dx * sinD(headingOffset),
-        headingDeg:next.headingDeg + headingOffset,
-        sliding:false
-      };
+      lateralSpeed = 0;
     }
+
+    // A sliding contact can stick again once kinetic friction arrests lateral motion.
+    const lateralDistance = (previousLateral + lateralSpeed) / 2 * dt * 1000;
+    const dx = next.x - prev.x + lateralDistance * cosD(headingMid);
+    const dy = next.y - prev.y - lateralDistance * sinD(headingMid);
+    if(slideStep){
+      firstSlide ??= {index:i, x:actual.x, y:actual.y, t:prev.t};
+      slideMm += Math.hypot(dx, dy);
+      slideTime += dt;
+    }
+
+    actual = {
+      x:next.x + (actual.x - prev.x) + lateralDistance * cosD(headingMid),
+      y:next.y + (actual.y - prev.y) - lateralDistance * sinD(headingMid),
+      headingDeg:next.headingDeg,
+      vx:forwardSpeed * sinD(next.headingDeg) + lateralSpeed * cosD(next.headingDeg),
+      vy:forwardSpeed * cosD(next.headingDeg) - lateralSpeed * sinD(next.headingDeg),
+      sliding:slideStep
+    };
     samples.push(actual);
-    maxErrorMm = Math.max(maxErrorMm, Math.hypot(actual.x - next.x, actual.y - next.y));
+    const errorX = actual.x - next.x, errorY = actual.y - next.y;
+    maxErrorMm = Math.max(maxErrorMm, Math.hypot(errorX, errorY));
+    maxLateralErrorMm = Math.max(maxLateralErrorMm,
+      Math.abs(errorX * cosD(next.headingDeg) - errorY * sinD(next.headingDeg)));
+    maxSlipAngleDeg = Math.max(maxSlipAngleDeg, rad2deg(Math.atan2(Math.abs(lateralSpeed), forwardSpeed)));
   }
 
   const end = commanded[commanded.length - 1];
   return {
-    samples, slideMm, slideTime, maxErrorMm,
+    samples, firstSlide, slideMm, slideTime, maxErrorMm, maxLateralErrorMm, maxSlipAngleDeg,
     endErrorMm:Math.hypot(actual.x - end.x, actual.y - end.y),
     headingErrorDeg:actual.headingDeg - end.headingDeg
   };
@@ -617,7 +636,34 @@ function drawTraceToIndex(index){
   ctx.stroke();
   ctx.restore();
 
-  drawRobot(actual[end]);
+  const first = sim.friction.firstSlide;
+  if(first && first.index <= end){
+    ctx.beginPath();
+    ctx.arc(...worldToCanvas(first.x, first.y), 6, 0, 2 * PI);
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "#991b1b";
+    ctx.lineWidth = 3;
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  const pose = actual[end];
+  drawRobot(pose);
+  if(pose.sliding){
+    const [x, y] = worldToCanvas(pose.x, pose.y);
+    const angle = Math.atan2(pose.vx, pose.vy);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 44 * Math.sin(angle), y - 44 * Math.cos(angle));
+    ctx.strokeStyle = "#991b1b";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+  const {speedMmS, omegaRadS} = sim.samples[end];
+  const halfDifference = omegaRadS * MACHINE.treadMm / 2;
+  els.wheelValues.textContent = "指令輪速（左 / 右） "
+    + (speedMmS + halfDifference).toFixed(1) + " / "
+    + (speedMmS - halfDifference).toFixed(1) + " mm/s";
 }
 
 function indexAtTime(t){
@@ -638,7 +684,7 @@ function setRows(el, rows){
 
 function updateInfo(){
   const p = sim.profile;
-  const {mu, friction} = sim;
+  const {grip, friction} = sim;
   const muReq = sim.maxAy / G;
   const force = MACHINE.massKg * sim.maxAy;
 
@@ -668,8 +714,14 @@ function updateInfo(){
     ["最大横G", (sim.maxAy / G).toFixed(3) + " G"],
     ["必要横力", force.toFixed(3) + " N"],
     ["必要μ（最大）", muReq.toFixed(3)],
-    ["横加速度の上限", (mu * G).toFixed(3) + " m/s²"],
+    ["静止 μs / 動 μk", grip.muStatic.toFixed(3) + " / " + grip.muKinetic.toFixed(3)],
+    ["静止 / 滑走中の横加速度上限", (grip.muStatic * G).toFixed(3) + " / " + (grip.muKinetic * G).toFixed(3) + " m/s²"],
+    ["最初の滑り開始 (X, Y)", friction.firstSlide
+      ? friction.firstSlide.x.toFixed(2) + ", " + friction.firstSlide.y.toFixed(2) + " mm"
+      : "—"],
     ["滑走区間の合計", friction.slideMm.toFixed(2) + " mm / " + (friction.slideTime * 1000).toFixed(1) + " ms"],
+    ["最大横ずれ（対指令進行方向）", friction.maxLateralErrorMm.toFixed(2) + " mm"],
+    ["最大スリップ角", friction.maxSlipAngleDeg.toFixed(2) + "°"],
     ["最大位置ずれ（対指令）", friction.maxErrorMm.toFixed(2) + " mm"],
     ["終了時の位置ずれ（対指令）", friction.endErrorMm.toFixed(2) + " mm"],
     ["終了時の姿勢ずれ（対指令）", friction.headingErrorDeg.toFixed(2) + "°"],
@@ -699,10 +751,13 @@ function regenerate(){
   els.playBtn.textContent = "▶ 再生";
   try{
     sim = simulateRoute();
-    sim.mu = els.muPreset.value === "custom"
-      ? numberValue(els.mu, DEFAULT_MU, 0, 5)
-      : Number(els.muPreset.value);
-    sim.friction = simulateFriction(sim.samples, sim.mu);
+    sim.grip = MEASURED_GRIP;
+    if(els.muPreset.value === "custom"){
+      const muStatic = numberValue(els.muStatic, MEASURED_GRIP.muStatic, 0, 5);
+      const muKinetic = numberValue(els.muKinetic, MEASURED_GRIP.muKinetic, 0, muStatic);
+      sim.grip = {muStatic, muKinetic};
+    }
+    sim.friction = simulateFriction(sim.samples, sim.grip);
     sim.view = routeView(sim.samples, sim.friction.samples);
     showWarning("");
     updateInfo();
@@ -715,6 +770,7 @@ function regenerate(){
     els.turnValues.innerHTML = "";
     els.physicsValues.innerHTML = "";
     els.gripStatus.textContent = "";
+    els.wheelValues.textContent = "";
   }
 }
 
@@ -756,22 +812,26 @@ els.profile.addEventListener("change",function(){
 els.pattern.addEventListener("change",regenerate);
 function updateFrictionInputs(){
   const custom = els.muPreset.value === "custom";
-  els.mu.parentElement.hidden = !custom;
-  els.mu.disabled = !custom;
+  for(const input of [els.muStatic, els.muKinetic]){
+    input.parentElement.hidden = !custom;
+    input.disabled = !custom;
+  }
 }
 els.muPreset.addEventListener("change",function(){
   updateFrictionInputs();
   regenerate();
 });
-els.mu.addEventListener("change",regenerate);
+els.muStatic.addEventListener("change",regenerate);
+els.muKinetic.addEventListener("change",regenerate);
 els.applyCodeBtn.addEventListener("click",applyCodeInputs);
 els.playBtn.addEventListener("click",play);
 els.resetBtn.addEventListener("click",function(){
   PROFILES = DEFAULT_PROFILES.map(function(p){ return Object.assign({}, p); });
   els.profile.value = "2";
   els.pattern.value = "left_right";
-  els.muPreset.value = "0.70";
-  els.mu.value = String(DEFAULT_MU);
+  els.muPreset.value = "measured";
+  els.muStatic.value = String(MEASURED_GRIP.muStatic);
+  els.muKinetic.value = String(MEASURED_GRIP.muKinetic);
   updateFrictionInputs();
   renderCodeInputs();
   regenerate();
