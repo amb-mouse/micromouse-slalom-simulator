@@ -42,12 +42,14 @@
 
     <canvas id="simCanvas" width="760" height="760"></canvas>
 
-    <div class="legend">
+    <div class="legend" aria-label="軌道の凡例">
       <span><i class="dot center"></i>マス中心の理想経路</span>
-      <span><i class="dot startstop"></i>半区画の発進/停止</span>
-      <span><i class="dot wallread"></i>壁読み取り</span>
-      <span><i class="dot entryexit"></i>入口/出口直進</span>
-      <span><i class="dot curve"></i>スラローム曲線</span>
+      <span><i class="dot startstop"></i>指令・半区画の発進/停止</span>
+      <span><i class="dot wallread"></i>指令・壁読み取り</span>
+      <span><i class="dot entryexit"></i>指令・入口/出口直進</span>
+      <span><i class="dot curve"></i>指令・スラローム曲線</span>
+      <span><i class="trace actual"></i>推定実軌道</span>
+      <span><i class="trace sliding"></i>滑走区間</span>
     </div>
   </section>
 
@@ -74,7 +76,19 @@
 
     <section class="card">
       <h2>物理診断</h2>
-      <label class="single-field">仮定する摩擦係数 μ<input id="mu" type="number" value="1.00" step="0.05" min="0.05" max="5"></label>
+      <div class="field">
+        <label for="muPreset">黒つや消し塗装木床の摩擦係数 μ</label>
+        <select id="muPreset">
+          <option value="0.70">基準（乾燥） μ = 0.70</option>
+          <option value="0.55">低グリップ μ = 0.55</option>
+          <option value="0.50">低グリップ μ = 0.50</option>
+          <option value="0.45">低グリップ μ = 0.45</option>
+          <option value="0.40">低グリップ μ = 0.40</option>
+          <option value="custom">カスタム</option>
+        </select>
+      </div>
+      <label class="single-field" hidden>カスタム μ（0～5）<input id="mu" type="number" value="0.70" step="any" min="0" max="5" disabled></label>
+      <p class="hint">プリセットは比較用の仮定値です。指令速度で走ると仮定し、横加速度を μg で制限します。姿勢ずれは右回りを正とします。</p>
       <dl id="physicsValues" class="kv spaced"></dl>
       <div id="gripStatus" class="status"></div>
     </section>

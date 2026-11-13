@@ -37,6 +37,10 @@ select,input{width:100%;min-height:42px;border:1px solid var(--border);border-ra
 .dot.wallread{background:var(--purple)}
 .dot.entryexit{background:var(--orange)}
 .dot.curve{background:var(--blue)}
+.trace{display:inline-block;width:16px;margin-right:5px;vertical-align:middle;border-top:2px dashed #fb7185}
+.trace.sliding{border-top:5px solid #fb7185}
+.single-field[hidden]{display:none}
+.single-field{margin-top:8px}
 .side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .card h2{font-size:15px;margin:0 0 10px}
 .section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}

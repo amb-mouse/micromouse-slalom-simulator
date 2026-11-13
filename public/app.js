@@ -5,6 +5,7 @@ const CELL = 180;
 const HALF_CELL = 90;
 const DT = 0.001;
 const G = 9.80665;
+const DEFAULT_MU = 0.70;
 
 const MACHINE = {
   massKg: 0.682,
@@ -71,6 +72,7 @@ const els = {
   pattern: document.querySelector("#pattern"),
   playBtn: document.querySelector("#playBtn"),
   resetBtn: document.querySelector("#resetBtn"),
+  muPreset: document.querySelector("#muPreset"),
   mu: document.querySelector("#mu"),
   codeParams: document.querySelector("#codeParams"),
   applyCodeBtn: document.querySelector("#applyCodeBtn"),
@@ -110,7 +112,7 @@ function sinD(d){ return Math.sin(deg2rad(d)); }
 function cosD(d){ return Math.cos(deg2rad(d)); }
 
 function numberValue(el, fallback, min, max){
-  let v = Number(el.value);
+  let v = el.value === "" ? fallback : Number(el.value);
   if(!Number.isFinite(v)) v = fallback;
   if(Number.isFinite(min)) v = Math.max(min, v);
   if(Number.isFinite(max)) v = Math.min(max, v);
@@ -419,10 +421,77 @@ function simulateRoute(){
   };
 }
 
+function simulateFriction(commanded, mu){
+  let actual = {...commanded[0], sliding:false};
+  const samples = [actual];
+  let slideMm = 0;
+  let slideTime = 0;
+  let maxErrorMm = 0;
+
+  for(let i=1;i<commanded.length;i++){
+    const prev = commanded[i - 1], next = commanded[i];
+    const dt = next.t - prev.t;
+    const speedMS = next.speedMmS / 1000;
+    const omega = next.omegaRadS;
+    const limit = mu * G / speedMS;
+    const sliding = Math.abs(omega) > limit;
+    const dx = next.x - prev.x, dy = next.y - prev.y;
+    const headingOffset = actual.headingDeg - prev.headingDeg;
+
+    if(sliding){
+      const headingChange = rad2deg(Math.sign(omega) * limit * dt);
+      const headingMid = actual.headingDeg + headingChange / 2;
+      const distanceMm = next.speedMmS * dt;
+      actual = {
+        x:actual.x + distanceMm * sinD(headingMid),
+        y:actual.y + distanceMm * cosD(headingMid),
+        headingDeg:actual.headingDeg + headingChange,
+        sliding:true
+      };
+      slideMm += distanceMm;
+      slideTime += dt;
+    }else{
+      // Reuse the exact commanded step in the actual frame to avoid integration drift at full grip.
+      actual = {
+        x:next.x + (actual.x - prev.x) + dx * (cosD(headingOffset) - 1) + dy * sinD(headingOffset),
+        y:next.y + (actual.y - prev.y) + dy * (cosD(headingOffset) - 1) - dx * sinD(headingOffset),
+        headingDeg:next.headingDeg + headingOffset,
+        sliding:false
+      };
+    }
+    samples.push(actual);
+    maxErrorMm = Math.max(maxErrorMm, Math.hypot(actual.x - next.x, actual.y - next.y));
+  }
+
+  const end = commanded[commanded.length - 1];
+  return {
+    samples, slideMm, slideTime, maxErrorMm,
+    endErrorMm:Math.hypot(actual.x - end.x, actual.y - end.y),
+    headingErrorDeg:actual.headingDeg - end.headingDeg
+  };
+}
+
+function routeView(commanded, actual){
+  let minX = 0, minY = 0, maxX = CELL * 3, maxY = CELL * 3;
+  for(const samples of [commanded, actual]){
+    for(const {x, y} of samples){
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  const span = Math.max(maxX - minX, maxY - minY);
+  return {
+    centerX:(minX + maxX) / 2,
+    centerY:(minY + maxY) / 2,
+    scale:(els.canvas.width - 110) / span
+  };
+}
+
 function worldToCanvas(x,y){
-  const margin = 55;
-  const scale = (els.canvas.width - 2 * margin) / (CELL * 3);
-  return [margin + x * scale, els.canvas.height - margin - y * scale];
+  const {centerX, centerY, scale} = sim?.view ?? routeView([], []);
+  return [els.canvas.width / 2 + (x - centerX) * scale, els.canvas.height / 2 - (y - centerY) * scale];
 }
 
 function drawMaze(){
@@ -477,7 +546,7 @@ function phaseColor(phase){
 
 function drawRobot(s){
   const p = worldToCanvas(s.x,s.y);
-  const scale = (els.canvas.width - 110) / (CELL * 3);
+  const scale = sim.view.scale;
   ctx.save();
   ctx.translate(p[0],p[1]);
   ctx.rotate(deg2rad(s.headingDeg));
@@ -525,7 +594,30 @@ function drawTraceToIndex(index){
     ctx.lineTo(pb[0],pb[1]);
     ctx.stroke();
   }
-  drawRobot(sim.samples[end]);
+  const actual = sim.friction.samples;
+  // Keep the commanded phase colors visible through the gaps in the actual trace.
+  ctx.save();
+  ctx.strokeStyle = "#991b1b";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6,5]);
+  ctx.beginPath();
+  ctx.moveTo(...worldToCanvas(actual[0].x, actual[0].y));
+  for(let i=1;i<=end;i++) ctx.lineTo(...worldToCanvas(actual[i].x, actual[i].y));
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for(let i=1;i<=end;i++){
+    if(!actual[i].sliding) continue;
+    if(!actual[i - 1].sliding) ctx.moveTo(...worldToCanvas(actual[i - 1].x, actual[i - 1].y));
+    ctx.lineTo(...worldToCanvas(actual[i].x, actual[i].y));
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  drawRobot(actual[end]);
 }
 
 function indexAtTime(t){
@@ -546,16 +638,16 @@ function setRows(el, rows){
 
 function updateInfo(){
   const p = sim.profile;
-  const mu = numberValue(els.mu,1,0.05,5);
+  const {mu, friction} = sim;
   const muReq = sim.maxAy / G;
   const force = MACHINE.massKg * sim.maxAy;
 
   setRows(els.resultValues,[
     ["速度", p.speed_mm_s.toFixed(0) + " mm/s"],
-    ["終了位置", sim.state.x.toFixed(2) + ", " + sim.state.y.toFixed(2) + " mm"],
+    ["指令終了位置", sim.state.x.toFixed(2) + ", " + sim.state.y.toFixed(2) + " mm"],
     ["理想中心との差", sim.errorMm.toFixed(2) + " mm"],
     ["X / Y誤差", sim.errorX.toFixed(2) + " / " + sim.errorY.toFixed(2) + " mm"],
-    ["終了姿勢", sim.state.headingDeg.toFixed(2) + "°"],
+    ["指令終了姿勢", sim.state.headingDeg.toFixed(2) + "°"],
     ["総走行時間", sim.state.t.toFixed(3) + " s"],
     ["最大角速度", rad2deg(sim.maxOmega).toFixed(1) + " °/s"]
   ]);
@@ -575,16 +667,20 @@ function updateInfo(){
     ["最大横加速度", sim.maxAy.toFixed(3) + " m/s²"],
     ["最大横G", (sim.maxAy / G).toFixed(3) + " G"],
     ["必要横力", force.toFixed(3) + " N"],
-    ["必要μ", muReq.toFixed(3)],
+    ["必要μ（最大）", muReq.toFixed(3)],
+    ["横加速度の上限", (mu * G).toFixed(3) + " m/s²"],
+    ["滑走区間の合計", friction.slideMm.toFixed(2) + " mm / " + (friction.slideTime * 1000).toFixed(1) + " ms"],
+    ["最大位置ずれ（対指令）", friction.maxErrorMm.toFixed(2) + " mm"],
+    ["終了時の位置ずれ（対指令）", friction.endErrorMm.toFixed(2) + " mm"],
+    ["終了時の姿勢ずれ（対指令）", friction.headingErrorDeg.toFixed(2) + "°"],
     ["最小内輪速度", sim.minInner.toFixed(1) + " mm/s"],
     ["最大外輪速度", sim.maxOuter.toFixed(1) + " mm/s"],
     ["1 pulse", MACHINE.mmPerPulse.toFixed(4) + " mm"]
   ]);
 
-  els.gripStatus.className = "status " + (mu >= muReq ? "ok" : "bad");
-  els.gripStatus.textContent = mu >= muReq
-    ? "μ=" + mu.toFixed(2) + " なら公称最大角速度では理論上グリップ範囲。"
-    : "μ=" + mu.toFixed(2) + " では必要μを超えるため、実機では横滑りが起こる可能性があります。";
+  const slides = friction.slideTime > 0;
+  els.gripStatus.className = "status " + (slides ? "bad" : "ok");
+  els.gripStatus.textContent = slides ? "摩擦限界を超える区間があります。" : "全区間で摩擦限界内です。";
 }
 
 function showWarning(message){
@@ -603,6 +699,11 @@ function regenerate(){
   els.playBtn.textContent = "▶ 再生";
   try{
     sim = simulateRoute();
+    sim.mu = els.muPreset.value === "custom"
+      ? numberValue(els.mu, DEFAULT_MU, 0, 5)
+      : Number(els.muPreset.value);
+    sim.friction = simulateFriction(sim.samples, sim.mu);
+    sim.view = routeView(sim.samples, sim.friction.samples);
     showWarning("");
     updateInfo();
     drawTraceToIndex(sim.samples.length - 1);
@@ -653,19 +754,31 @@ els.profile.addEventListener("change",function(){
   regenerate();
 });
 els.pattern.addEventListener("change",regenerate);
-els.mu.addEventListener("change",function(){ if(sim) updateInfo(); });
+function updateFrictionInputs(){
+  const custom = els.muPreset.value === "custom";
+  els.mu.parentElement.hidden = !custom;
+  els.mu.disabled = !custom;
+}
+els.muPreset.addEventListener("change",function(){
+  updateFrictionInputs();
+  regenerate();
+});
+els.mu.addEventListener("change",regenerate);
 els.applyCodeBtn.addEventListener("click",applyCodeInputs);
 els.playBtn.addEventListener("click",play);
 els.resetBtn.addEventListener("click",function(){
   PROFILES = DEFAULT_PROFILES.map(function(p){ return Object.assign({}, p); });
   els.profile.value = "2";
   els.pattern.value = "left_right";
-  els.mu.value = "1.00";
+  els.muPreset.value = "0.70";
+  els.mu.value = String(DEFAULT_MU);
+  updateFrictionInputs();
   renderCodeInputs();
   regenerate();
 });
 
 els.profile.value = "2";
 els.pattern.value = "left_right";
+updateFrictionInputs();
 renderCodeInputs();
 regenerate();
